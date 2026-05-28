@@ -158,6 +158,61 @@ export const contractClient = {
     });
   },
 
+  async getNonce(actor: string, callerAddress: string): Promise<number> {
+    const simulated = await buildAndSimulateTransaction({
+      method: 'get_nonce',
+      args: [new Address(actor)],
+      callerAddress,
+    });
+
+    if (rpc.Api.isSimulationSuccess(simulated)) {
+      return Number(scValToNative(simulated.result!.retval) ?? 0);
+    }
+    throw new Error('Failed to get nonce');
+  },
+
+  async approveEvent(
+    productId: string,
+    pendingEventId: number,
+    approver: string,
+    callerAddress: string,
+  ): Promise<string> {
+    const nonce = await contractClient.getNonce(approver, callerAddress);
+    return buildSignAndSubmitTransaction({
+      method: 'approve_event',
+      args: [productId, pendingEventId, new Address(approver), nonce],
+      callerAddress,
+    });
+  },
+
+  async rejectEvent(
+    productId: string,
+    pendingEventId: number,
+    rejector: string,
+    reason: string,
+    callerAddress: string,
+  ): Promise<string> {
+    const nonce = await contractClient.getNonce(rejector, callerAddress);
+    return buildSignAndSubmitTransaction({
+      method: 'reject_event',
+      args: [productId, pendingEventId, new Address(rejector), reason, nonce],
+      callerAddress,
+    });
+  },
+
+  async getPendingEvents(productId: string, callerAddress: string): Promise<any[]> {
+    const simulated = await buildAndSimulateTransaction({
+      method: 'get_pending_events',
+      args: [productId],
+      callerAddress,
+    });
+
+    if (rpc.Api.isSimulationSuccess(simulated)) {
+      return scValToNative(simulated.result!.retval) || [];
+    }
+    throw new Error('Failed to get pending events');
+  },
+
   async deactivateProduct(productId: string, callerAddress: string): Promise<string> {
     return buildSignAndSubmitTransaction({
       method: 'deactivate_product',

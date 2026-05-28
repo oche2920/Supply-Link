@@ -15,6 +15,7 @@ import { authenticateApiRequest } from '@/lib/api/auth';
 import { withIdempotency } from '@/lib/api/idempotency';
 import { getProductById, getEventsByProductId, MOCK_EVENTS } from '@/lib/mock/products';
 import { recordRequest } from '@/lib/api/metrics';
+import { validateEventMetadata } from '@/lib/api/eventMetadataSchemas';
 import type { TrackingEvent, PaginatedResponse, EventType } from '@/lib/types';
 
 export function OPTIONS(request: NextRequest) {
@@ -92,12 +93,16 @@ async function addEvent(
     return apiError(req, 400, ErrorCode.MISSING_FIELDS, 'Missing or invalid: actor');
   }
 
-  // Validate optional metadata
+  // Validate typed metadata shape by event type
   const metadata = typeof body.metadata === 'string' ? body.metadata : '{}';
-  try {
-    JSON.parse(metadata);
-  } catch {
-    return apiError(req, 400, ErrorCode.VALIDATION_ERROR, 'metadata must be valid JSON string');
+  const metadataValidation = validateEventMetadata(body.eventType as string, metadata);
+  if (!metadataValidation.valid) {
+    return apiError(
+      req,
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Invalid metadata: ${metadataValidation.error}`,
+    );
   }
 
   // Create new event
