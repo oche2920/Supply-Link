@@ -14,7 +14,8 @@ use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Address, 
 /// | Version | Changes |
 /// |---------|---------|
 /// | 1       | Initial versioned schema. Adds `schema_version` field. |
-pub const EVENT_SCHEMA_VERSION: u32 = 1;
+/// | 2       | Adds `metadata_commitment` and `private_metadata` fields for privacy-preserving (off-chain encrypted) metadata. |
+pub const EVENT_SCHEMA_VERSION: u32 = 2;
 
 mod tests;
 mod resilience_tests;
@@ -33,6 +34,9 @@ const MAX_NAME_LEN:     u32 = 256;
 const MAX_ORIGIN_LEN:   u32 = 256;
 const MAX_LOCATION_LEN: u32 = 256;
 const MAX_METADATA_LEN: u32 = 4096;
+// Privacy commitment (issue #409): a hex-encoded hash of the off-chain encrypted
+// payload. A SHA-256 hex digest is 64 chars; allow headroom for other digests.
+const MAX_COMMITMENT_LEN: u32 = 128;
 
 // ── Event expiration policy (issue #314) ──────────────────────────────────────
 /// Pending events expire after this many seconds (7 days).
@@ -148,6 +152,11 @@ pub struct TrackingEvent {
     /// Arbitrary JSON string carrying stage-specific metadata
     /// (e.g. `{"temperature":"4°C","humidity":"60%"}`). The contract stores
     /// this opaquely; consumers are responsible for parsing it.
+    ///
+    /// For privacy-preserving events (see `private_metadata`) this field is an
+    /// **empty string**: the plaintext is never written on-chain. The encrypted
+    /// payload lives off-chain and only its hash is recorded in
+    /// `metadata_commitment`.
     pub metadata: String,
     /// Stable deterministic event ID — a hex-encoded SHA-256 hash of the
     /// canonical fields: `product_id|actor|event_type|timestamp|metadata`.
@@ -483,24 +492,106 @@ o            actor: caller,
             stable_id,
         };
 
-        // Check if multi-signature is required
+        Self::record_event(&env, &product, event.clone());
+
+        Ok(event)
+    }
+
+    /// Add a tracking event whose metadata is private (issue #409).
+    ///
+    /// Identical to [`Self::add_tracking_event`] except the plaintext metadata is
+    /// **never** written on-chain. The caller encrypts the sensitive metadata
+    /// off-chain, stores the ciphertext off-chain, and submits only a
+    /// `metadata_commitment` — a hex-encoded hash of that ciphertext. The stored
+    /// event has `private_metadata = true` and an empty `metadata` field.
+    ///
+    /// This preserves provable provenance (anyone can hash the off-chain payload
+    /// and compare it against the on-chain commitment) while keeping the contents
+    /// confidential: the commitment is a one-way hash, so the plaintext cannot be
+    /// recovered from on-chain data alone.
+    ///
+    /// # Parameters
+    /// - `metadata_commitment` — Hex-encoded hash of the off-chain encrypted
+    ///   payload. Must be non-empty and at most `MAX_COMMITMENT_LEN` bytes.
+    ///
+    /// # Authorization
+    /// Identical to [`Self::add_tracking_event`].
+    ///
+    /// # Panics
+    /// - `"commitment required for private metadata"` — if `metadata_commitment` is empty.
+    /// - `"metadata_commitment exceeds max length"` — if the commitment is too long.
+    ///
+    /// # Errors
+    /// - [`Error::ProductNotFound`] — if `product_id` is not registered.
+    /// - [`Error::NotAuthorized`] — if `caller` is neither owner nor authorized actor.
+    pub fn add_private_tracking_event(
+        env: Env,
+        product_id: String,
+        caller: Address,
+        location: String,
+        event_type: String,
+        metadata_commitment: String,
+    ) -> Result<TrackingEvent, Error> {
+        let product: Product = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Product(product_id.clone()))
+            .ok_or(Error::ProductNotFound)?;
+
+        let is_owner = product.owner == caller;
+        let is_actor = product.authorized_actors.contains(&caller);
+        if !is_owner && !is_actor {
+            return Err(Error::NotAuthorized);
+        }
+        caller.require_auth();
+
+        assert_len(&location, MAX_LOCATION_LEN, "location");
+        if metadata_commitment.len() == 0 {
+            panic!("commitment required for private metadata");
+        }
+        assert_len(&metadata_commitment, MAX_COMMITMENT_LEN, "metadata_commitment");
+
+        let event = TrackingEvent {
+            schema_version: EVENT_SCHEMA_VERSION,
+            product_id: product_id.clone(),
+            location,
+            actor: caller.clone(),
+            timestamp: env.ledger().timestamp(),
+            event_type,
+            // Plaintext is NEVER stored on-chain for private events.
+            metadata: String::from_str(&env, ""),
+            metadata_commitment,
+            private_metadata: true,
+        };
+
+        Self::record_event(&env, &product, event.clone());
+
+        Ok(event)
+    }
+
+    /// Append a finalized event, or stage it for multi-signature approval, then
+    /// emit the matching event. Shared by [`Self::add_tracking_event`] and
+    /// [`Self::add_private_tracking_event`].
+    fn record_event(env: &Env, product: &Product, event: TrackingEvent) {
+        let product_id = event.product_id.clone();
+        let event_type = event.event_type.clone();
+
         if product.required_signatures > 1 {
             // Stage event as pending with a stable ID
             let mut pending: Vec<PendingEvent> = env
                 .storage()
                 .persistent()
                 .get(&DataKey::PendingEvents(product_id.clone()))
-                .unwrap_or_else(|| Vec::new(&env));
+                .unwrap_or_else(|| Vec::new(env));
 
-            // Generate next stable pending event ID
             let next_id: u64 = env
                 .storage()
                 .persistent()
                 .get(&DataKey::NextPendingId(product_id.clone()))
                 .unwrap_or(0u64);
 
-            let mut approvals = Vec::new(&env);
-            approvals.push_back(caller);
+            let mut approvals = Vec::new(env);
+            approvals.push_back(event.actor.clone());
 
             let pending_event = PendingEvent {
                 pending_event_id: next_id,
@@ -517,37 +608,31 @@ o            actor: caller,
                 .persistent()
                 .set(&DataKey::PendingEvents(product_id.clone()), &pending);
 
-            // Increment the ID counter for next pending event
             env.storage()
                 .persistent()
                 .set(&DataKey::NextPendingId(product_id.clone()), &(next_id + 1));
 
-            // Emit pending event
             env.events().publish(
-                (Symbol::new(&env, "event_pending"), product_id, event_type, EVENT_SCHEMA_VERSION),
-                event.clone(),
+                (Symbol::new(env, "event_pending"), product_id, event_type, EVENT_SCHEMA_VERSION),
+                event,
             );
         } else {
-            // Immediately finalize event
             let mut events: Vec<TrackingEvent> = env
                 .storage()
                 .persistent()
                 .get(&DataKey::Events(product_id.clone()))
-                .unwrap_or_else(|| Vec::new(&env));
+                .unwrap_or_else(|| Vec::new(env));
 
             events.push_back(event.clone());
             env.storage()
                 .persistent()
                 .set(&DataKey::Events(product_id.clone()), &events);
 
-            // Emit event
             env.events().publish(
-                (Symbol::new(&env, "event_added"), product_id, event_type, EVENT_SCHEMA_VERSION),
-                event.clone(),
+                (Symbol::new(env, "event_added"), product_id, event_type, EVENT_SCHEMA_VERSION),
+                event,
             );
         }
-
-        Ok(event)
     }
 
     /// Retrieve a product by its ID.

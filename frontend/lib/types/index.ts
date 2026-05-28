@@ -1,5 +1,5 @@
-export type EventType = "HARVEST" | "PROCESSING" | "SHIPPING" | "RETAIL";
-export type ProductStatus = "active" | "inactive";
+export type EventType = 'HARVEST' | 'PROCESSING' | 'SHIPPING' | 'RETAIL';
+export type ProductStatus = 'active' | 'inactive';
 
 export interface TemplateStage {
   label: string;
@@ -77,7 +77,7 @@ export interface Notification {
 
 export interface TransactionResult {
   hash: string;
-  status: "success" | "failed" | "pending";
+  status: 'success' | 'failed' | 'pending';
   fee: string;
   timestamp: number;
 }
