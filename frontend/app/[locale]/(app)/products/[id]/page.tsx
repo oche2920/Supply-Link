@@ -12,6 +12,8 @@ import { LazyEventMap } from '@/components/lazy/LazyEventMap';
 import { SustainabilityBadge } from '@/components/products/SustainabilityBadge';
 import { CertificationsPanel } from '@/components/products/CertificationBadge';
 import { getCategoryLabel, getSubcategoryLabel } from '@/lib/taxonomy';
+import { AnchorDocumentForm } from '@/components/products/AnchorDocumentForm';
+import { DocumentAnchorsPanel } from '@/components/products/DocumentAnchorsPanel';
 
 interface Props {
   params: { id: string };
@@ -144,6 +146,18 @@ export default function ProductDetailPage({ params }: Props) {
         <div className="flex flex-col sm:flex-row gap-3">
           <DownloadBadgeButton product={p} />
           <DownloadCertificateButton product={p} events={events} />
+        </div>
+      </section>
+
+      {/* Document Anchors (#460) */}
+      <section className="border border-[var(--card-border)] bg-[var(--card)] rounded-xl p-6 mb-6">
+        <h2 className="text-base font-semibold mb-4 text-[var(--foreground)]">Document Anchors</h2>
+        <DocumentAnchorsPanel anchors={[]} />
+        <div className="mt-6 border-t border-[var(--card-border)] pt-4">
+          <h3 className="text-sm font-medium text-[var(--foreground)] mb-3">
+            Anchor a new document
+          </h3>
+          <AnchorDocumentForm productId={p.id} />
         </div>
       </section>
 

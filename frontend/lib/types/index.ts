@@ -6,7 +6,7 @@ export interface TemplateStage {
   eventType: EventType;
 }
 
-export type ActorRole = "Producer" | "Processor" | "Shipper" | "Retailer" | "Any";
+export type ActorRole = 'Producer' | 'Processor' | 'Shipper' | 'Retailer' | 'Any';
 
 export interface OwnershipRecord {
   owner: string;
@@ -109,8 +109,6 @@ export interface EventPage {
   pending?: boolean;
 }
 
-export interface EventPage {
-  events: TrackingEvent[];
 export interface PendingEvent {
   pendingEventId: number;
   productId: string;
@@ -167,6 +165,8 @@ export interface EventFilter {
   actor?: string | null;
   fromTimestamp?: number | null;
   toTimestamp?: number | null;
+}
+
 export interface Rating {
   id: string;
   productId: string;
@@ -174,4 +174,14 @@ export interface Rating {
   stars: number;
   comment: string | null;
   timestamp: number;
+}
+
+/** An off-chain document anchored on-chain by its SHA-256 hash. (#460) */
+export interface DocumentAnchor {
+  productId: string;
+  label: string;
+  /** Hex-encoded SHA-256 digest (64 chars). */
+  hash: string;
+  anchoredBy: string;
+  anchoredAt: number;
 }

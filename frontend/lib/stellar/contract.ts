@@ -5,8 +5,21 @@
  * All contract calls are stubs — replace with real Soroban SDK invocations.
  */
 
-import type { TrackingEvent, EventType, EventFilter, EventPage, AuthPolicy } from "@/lib/types";
-import { MOCK_EVENTS } from "@/lib/mock/products";
+import type { TrackingEvent, EventType, EventFilter, EventPage, AuthPolicy } from '@/lib/types';
+import { MOCK_EVENTS } from '@/lib/mock/products';
+import {
+  Contract,
+  rpc,
+  TransactionBuilder,
+  BASE_FEE,
+  Address,
+  nativeToScVal,
+  scValToNative,
+} from '@stellar/stellar-sdk';
+import { signTransaction } from './client';
+import { NETWORK_PASSPHRASE, RPC_URL, CONTRACT_ID } from './client';
+import { withContractRetry, withContractWriteRetry } from '@/lib/resilience';
+import { recordDependency, recordOperation } from '@/lib/api/metrics';
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -21,17 +34,14 @@ export async function fetchEventPage(
   productId: string,
   offset: number,
   limit: number = DEFAULT_PAGE_SIZE,
-  filter?: EventFilter
+  filter?: EventFilter,
 ): Promise<EventPage> {
   // TODO: replace with real Soroban RPC call to list_tracking_events(productId, offset, limit)
   await new Promise((r) => setTimeout(r, 300));
 
-  // Simulate contract returning a page of raw events
   const allForProduct = MOCK_EVENTS.filter((e) => e.productId === productId);
   const total = allForProduct.length;
   const rawPage = allForProduct.slice(offset, offset + limit);
-
-  // Apply client-side filters (event_type, actor, date range)
   const filtered = applyFilter(rawPage, filter);
 
   return { events: filtered, total, offset, limit };
@@ -39,12 +49,11 @@ export async function fetchEventPage(
 
 /**
  * Fetch ALL events for a product across multiple pages, applying filters.
- * Use for provenance path reconstruction and audit exports.
  */
 export async function fetchAllEvents(
   productId: string,
   filter?: EventFilter,
-  pageSize: number = DEFAULT_PAGE_SIZE
+  pageSize: number = DEFAULT_PAGE_SIZE,
 ): Promise<TrackingEvent[]> {
   const first = await fetchEventPage(productId, 0, pageSize, filter);
   const total = first.total;
@@ -64,38 +73,53 @@ export async function fetchAllEvents(
  */
 export async function fetchProvenancePath(productId: string): Promise<TrackingEvent[]> {
   const events = await fetchAllEvents(productId);
-  // Sort by timestamp ascending (oldest first = origin → consumer)
   return [...events].sort((a, b) => a.timestamp - b.timestamp);
 }
 
-// ── Authorization policy ──────────────────────────────────────────────────────
-import {
-  Contract,
-  rpc,
-  TransactionBuilder,
-  Networks,
-  BASE_FEE,
-  Address,
-  nativeToScVal,
-  scValToNative,
-} from '@stellar/stellar-sdk';
-import { signTransaction } from './client';
-import { NETWORK_PASSPHRASE, RPC_URL, CONTRACT_ID, getNetwork } from './client';
-import { withContractRetry, withContractWriteRetry } from '@/lib/resilience';
-import { recordDependency, recordOperation } from '@/lib/api/metrics';
+/**
+ * Fetch the authorization policy (roles + threshold) for a product.
+ */
+export async function fetchAuthPolicy(productId: string): Promise<AuthPolicy> {
+  // TODO: replace with real Soroban RPC call to get_authorization_policy(productId)
+  await new Promise((r) => setTimeout(r, 200));
+  return { threshold: 1, roles: [] };
+}
+
+// ── Client-side filtering ─────────────────────────────────────────────────────
+
+export function applyFilter(events: TrackingEvent[], filter?: EventFilter): TrackingEvent[] {
+  if (!filter) return events;
+
+  return events.filter((e) => {
+    if (filter.eventType && e.eventType !== filter.eventType) return false;
+    if (filter.actor && e.actor.toLowerCase() !== filter.actor.toLowerCase()) return false;
+    if (filter.fromTimestamp && e.timestamp < filter.fromTimestamp) return false;
+    if (filter.toTimestamp && e.timestamp > filter.toTimestamp) return false;
+    return true;
+  });
+}
+
+export function extractActors(events: TrackingEvent[]): string[] {
+  return [...new Set(events.map((e) => e.actor))];
+}
+
+export function extractEventTypes(events: TrackingEvent[]): EventType[] {
+  return [...new Set(events.map((e) => e.eventType))] as EventType[];
+}
+
+// ── Soroban RPC helpers ───────────────────────────────────────────────────────
 
 const server = new rpc.Server(RPC_URL);
 
 interface ContractInvocationParams {
   method: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   args: any[];
   callerAddress: string;
 }
 
-async function buildAndSimulateTransaction(
-  params: ContractInvocationParams,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): Promise<any> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function buildAndSimulateTransaction(params: ContractInvocationParams): Promise<any> {
   const account = await server.getAccount(params.callerAddress);
   const contract = new Contract(CONTRACT_ID);
 
@@ -122,7 +146,6 @@ async function buildSignAndSubmitTransaction(params: ContractInvocationParams): 
     .setTimeout(30)
     .build();
 
-  // Simulate to get auth and resource fees
   const simulated = await server.simulateTransaction(tx);
 
   if (rpc.Api.isSimulationSuccess(simulated)) {
@@ -131,53 +154,15 @@ async function buildSignAndSubmitTransaction(params: ContractInvocationParams): 
     throw new Error(`Simulation failed: ${simulated.error}`);
   }
 
-  // Sign with Freighter
   const signed = await signTransaction(tx.toXDR(), { networkPassphrase: NETWORK_PASSPHRASE });
   const signedTx = TransactionBuilder.fromXDR(signed.signedTxXdr, NETWORK_PASSPHRASE);
 
-/**
- * Fetch the authorization policy (roles + threshold) for a product.
- */
-export async function fetchAuthPolicy(productId: string): Promise<AuthPolicy> {
-  // TODO: replace with real Soroban RPC call to get_authorization_policy(productId)
-  await new Promise((r) => setTimeout(r, 200));
-  return { threshold: 1, roles: [] };
+  const result = await server.sendTransaction(signedTx);
+  return result.hash;
 }
 
-// ── Client-side filtering ─────────────────────────────────────────────────────
+// ── Contract client ───────────────────────────────────────────────────────────
 
-/**
- * Apply client-side filters to a list of events.
- * Used for metadata fields that cannot be filtered on-chain.
- */
-export function applyFilter(
-  events: TrackingEvent[],
-  filter?: EventFilter
-): TrackingEvent[] {
-  if (!filter) return events;
-
-  return events.filter((e) => {
-    if (filter.eventType && e.eventType !== filter.eventType) return false;
-    if (filter.actor && e.actor.toLowerCase() !== filter.actor.toLowerCase()) return false;
-    if (filter.fromTimestamp && e.timestamp < filter.fromTimestamp) return false;
-    if (filter.toTimestamp && e.timestamp > filter.toTimestamp) return false;
-    return true;
-  });
-}
-
-/**
- * Get unique actors from a list of events (for filter chip generation).
- */
-export function extractActors(events: TrackingEvent[]): string[] {
-  return [...new Set(events.map((e) => e.actor))];
-}
-
-/**
- * Get unique event types from a list of events.
- */
-export function extractEventTypes(events: TrackingEvent[]): EventType[] {
-  return [...new Set(events.map((e) => e.eventType))] as EventType[];
-}
 export const contractClient = {
   async registerProduct(
     productId: string,
@@ -231,7 +216,7 @@ export const contractClient = {
       });
   },
 
-  async getProduct(productId: string, callerAddress: string): Promise<any> {
+  async getProduct(productId: string, callerAddress: string): Promise<unknown> {
     return withContractRetry(async () => {
       const simulated = await buildAndSimulateTransaction({
         method: 'get_product',
@@ -251,7 +236,7 @@ export const contractClient = {
     });
   },
 
-  async getTrackingEvents(productId: string, callerAddress: string): Promise<any[]> {
+  async getTrackingEvents(productId: string, callerAddress: string): Promise<unknown[]> {
     return withContractRetry(async () => {
       const simulated = await buildAndSimulateTransaction({
         method: 'get_tracking_events',
@@ -379,7 +364,7 @@ export const contractClient = {
     });
   },
 
-  async getPendingEvents(productId: string, callerAddress: string): Promise<any[]> {
+  async getPendingEvents(productId: string, callerAddress: string): Promise<unknown[]> {
     const simulated = await buildAndSimulateTransaction({
       method: 'get_pending_events',
       args: [productId],
@@ -414,7 +399,7 @@ export const contractClient = {
     page: number = 0,
     pageSize: number = 20,
     callerAddress: string,
-  ): Promise<any[]> {
+  ): Promise<unknown[]> {
     return withContractRetry(async () => {
       const simulated = await buildAndSimulateTransaction({
         method: 'list_products',
@@ -465,5 +450,72 @@ export const contractClient = {
       return new Uint8Array(32);
     }
     throw new Error('Failed to get provenance root');
+  },
+
+  // ── #460: Document hash anchoring ──────────────────────────────────────────
+
+  async anchorDocumentHash(
+    productId: string,
+    label: string,
+    hash: string,
+    callerAddress: string,
+  ): Promise<string> {
+    return withContractWriteRetry(() =>
+      buildSignAndSubmitTransaction({
+        method: 'anchor_document_hash',
+        args: [productId, label, hash, new Address(callerAddress)],
+        callerAddress,
+      }),
+    )
+      .then((txHash) => {
+        recordDependency('soroban-rpc', true);
+        recordOperation('document.anchor', 'success');
+        return txHash;
+      })
+      .catch((err) => {
+        recordDependency('soroban-rpc', false);
+        recordOperation('document.anchor', 'failure');
+        throw err;
+      });
+  },
+
+  async verifyDocumentHash(
+    productId: string,
+    hash: string,
+    callerAddress: string,
+  ): Promise<boolean> {
+    return withContractRetry(async () => {
+      const simulated = await buildAndSimulateTransaction({
+        method: 'verify_document_hash',
+        args: [productId, hash],
+        callerAddress,
+      });
+      if (rpc.Api.isSimulationSuccess(simulated)) {
+        recordDependency('soroban-rpc', true);
+        return Boolean(scValToNative(simulated.result!.retval));
+      }
+      throw new Error('Failed to verify document hash');
+    }).catch((err) => {
+      recordDependency('soroban-rpc', false);
+      throw err;
+    });
+  },
+
+  async getDocumentAnchors(productId: string, callerAddress: string): Promise<unknown[]> {
+    return withContractRetry(async () => {
+      const simulated = await buildAndSimulateTransaction({
+        method: 'get_document_anchors',
+        args: [productId],
+        callerAddress,
+      });
+      if (rpc.Api.isSimulationSuccess(simulated)) {
+        recordDependency('soroban-rpc', true);
+        return scValToNative(simulated.result!.retval) || [];
+      }
+      throw new Error('Failed to get document anchors');
+    }).catch((err) => {
+      recordDependency('soroban-rpc', false);
+      throw err;
+    });
   },
 };

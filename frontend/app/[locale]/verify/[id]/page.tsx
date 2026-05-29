@@ -10,6 +10,7 @@ import { ScanQRButton } from '@/components/tracking/ScanQRButton';
 import { ShareButton } from '@/components/ui/ShareButton';
 import { ProvenanceScoreGauge } from '@/components/products/ProvenanceScoreGauge';
 import ProductVerifyClient from './ProductVerifyClient';
+import { DocumentAnchorsPanel } from '@/components/products/DocumentAnchorsPanel';
 
 interface Props {
   params: Promise<{ id: string; locale: string }>;
@@ -166,6 +167,14 @@ export default async function VerifyPage({ params }: Props) {
           {t('communityRatings')}
         </h2>
         <RatingWidget productId={product.id} />
+      </section>
+
+      {/* Document Anchors (#460) */}
+      <section className="mt-6 border border-[var(--card-border)] bg-[var(--card)] rounded-xl p-6">
+        <h2 className="text-base font-semibold text-[var(--foreground)] mb-4">
+          Anchored Documents
+        </h2>
+        <DocumentAnchorsPanel anchors={[]} />
       </section>
 
       <div className="mt-6 flex justify-center">
