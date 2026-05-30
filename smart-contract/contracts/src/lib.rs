@@ -52,6 +52,34 @@ pub enum DataKey {
     ProductIndex(u64),
     Certifications(String), // keyed by product_id
     CertById(String),       // keyed by cert_id for fast lookup
+    Paused,                 // bool — emergency stop flag
+    Guardians,              // Vec<Address> — addresses allowed to pause/unpause
+}
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+/// Panics with "contract is paused" when the emergency stop is active.
+fn require_not_paused(env: &Env) {
+    let paused: bool = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Paused)
+        .unwrap_or(false);
+    if paused {
+        panic!("contract is paused");
+    }
+}
+
+/// Panics unless `caller` is in the guardians list.
+fn require_guardian(env: &Env, caller: &Address) {
+    let guardians: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Guardians)
+        .unwrap_or_else(|| Vec::new(env));
+    if !guardians.contains(caller) {
+        panic!("caller is not a guardian");
+    }
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -69,6 +97,7 @@ impl SupplyLinkContract {
         origin: String,
         owner: Address,
     ) -> Product {
+        require_not_paused(&env);
         owner.require_auth();
         let product = Product {
             id: id.clone(),
@@ -112,6 +141,7 @@ impl SupplyLinkContract {
         event_type: String,
         metadata: String,
     ) -> TrackingEvent {
+        require_not_paused(&env);
         let product: Product = env
             .storage()
             .persistent()
@@ -165,6 +195,7 @@ impl SupplyLinkContract {
         caller: Address,
         event_index: u32,
     ) -> TrackingEvent {
+        require_not_paused(&env);
         let product: Product = env
             .storage()
             .persistent()
@@ -176,7 +207,7 @@ impl SupplyLinkContract {
         }
         caller.require_auth();
 
-        let mut events: Vec<TrackingEvent> = env
+        let events: Vec<TrackingEvent> = env
             .storage()
             .persistent()
             .get(&DataKey::Events(product_id.clone()))
@@ -264,6 +295,7 @@ impl SupplyLinkContract {
 
     /// Transfer product ownership.
     pub fn transfer_ownership(env: Env, product_id: String, new_owner: Address) -> bool {
+        require_not_paused(&env);
         let mut product: Product = env
             .storage()
             .persistent()
@@ -286,6 +318,7 @@ impl SupplyLinkContract {
 
     /// Authorize an actor to add events for a product.
     pub fn add_authorized_actor(env: Env, product_id: String, actor: Address) -> bool {
+        require_not_paused(&env);
         let mut product: Product = env
             .storage()
             .persistent()
@@ -310,6 +343,7 @@ impl SupplyLinkContract {
     /// Only the product owner may call this.
     /// Returns true if the actor was removed, false if they were not in the list.
     pub fn remove_authorized_actor(env: Env, product_id: String, actor: Address) -> bool {
+        require_not_paused(&env);
         let mut product: Product = env
             .storage()
             .persistent()
@@ -345,6 +379,7 @@ impl SupplyLinkContract {
         name: String,
         origin: String,
     ) -> Product {
+        require_not_paused(&env);
         let mut product: Product = env
             .storage()
             .persistent()
@@ -421,6 +456,7 @@ impl SupplyLinkContract {
         cert_type: String,
         reference: String,
     ) -> Certification {
+        require_not_paused(&env);
         let product: Product = env
             .storage()
             .persistent()
@@ -485,6 +521,7 @@ impl SupplyLinkContract {
         caller: Address,
         cert_id: String,
     ) -> Certification {
+        require_not_paused(&env);
         let product: Product = env
             .storage()
             .persistent()
@@ -520,7 +557,7 @@ impl SupplyLinkContract {
             .set(&DataKey::CertById(cert_id.clone()), &cert);
 
         // Update within product's certification list
-        let mut certs: Vec<Certification> = env
+        let certs: Vec<Certification> = env
             .storage()
             .persistent()
             .get(&DataKey::Certifications(product_id.clone()))
@@ -574,6 +611,120 @@ impl SupplyLinkContract {
         env.storage()
             .persistent()
             .get(&DataKey::Certifications(product_id))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    // ── Emergency Stop ────────────────────────────────────────────────────────
+
+    /// Bootstrap: add the first guardian. Can only be called when the guardians
+    /// list is empty (i.e. contract is freshly deployed). The caller becomes the
+    /// initial guardian and must authorise the call.
+    pub fn init_guardian(env: Env, guardian: Address) {
+        let existing: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Guardians)
+            .unwrap_or_else(|| Vec::new(&env));
+        if !existing.is_empty() {
+            panic!("guardians already initialised");
+        }
+        guardian.require_auth();
+        let mut guardians = Vec::new(&env);
+        guardians.push_back(guardian.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::Guardians, &guardians);
+        env.events().publish(
+            (Symbol::new(&env, "guardian_added"),),
+            guardian,
+        );
+    }
+
+    /// Add a new guardian. Only an existing guardian may call this.
+    pub fn add_guardian(env: Env, caller: Address, new_guardian: Address) {
+        caller.require_auth();
+        require_guardian(&env, &caller);
+        let mut guardians: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Guardians)
+            .unwrap_or_else(|| Vec::new(&env));
+        if guardians.contains(&new_guardian) {
+            panic!("address is already a guardian");
+        }
+        guardians.push_back(new_guardian.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::Guardians, &guardians);
+        env.events().publish(
+            (Symbol::new(&env, "guardian_added"),),
+            new_guardian,
+        );
+    }
+
+    /// Remove a guardian. Only an existing guardian may call this.
+    /// The last guardian cannot be removed (must always have at least one).
+    pub fn remove_guardian(env: Env, caller: Address, target: Address) {
+        caller.require_auth();
+        require_guardian(&env, &caller);
+        let guardians: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Guardians)
+            .unwrap_or_else(|| Vec::new(&env));
+        if guardians.len() <= 1 {
+            panic!("cannot remove the last guardian");
+        }
+        let mut updated = Vec::new(&env);
+        let mut found = false;
+        for i in 0..guardians.len() {
+            let g = guardians.get(i).unwrap();
+            if g == target {
+                found = true;
+            } else {
+                updated.push_back(g);
+            }
+        }
+        if !found {
+            panic!("address is not a guardian");
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::Guardians, &updated);
+        env.events().publish(
+            (Symbol::new(&env, "guardian_removed"),),
+            target,
+        );
+    }
+
+    /// Pause or unpause the contract. Only a guardian may call this.
+    /// When paused, all write operations are rejected.
+    /// Read operations remain available at all times.
+    pub fn set_pause_state(env: Env, caller: Address, paused: bool) {
+        caller.require_auth();
+        require_guardian(&env, &caller);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Paused, &paused);
+        env.events().publish(
+            (Symbol::new(&env, "pause_state_changed"),),
+            paused,
+        );
+    }
+
+    /// Returns true if the contract is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
+    /// Returns the current list of guardians.
+    pub fn get_guardians(env: Env) -> Vec<Address> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Guardians)
             .unwrap_or_else(|| Vec::new(&env))
     }
 }
@@ -1195,5 +1346,160 @@ mod tests {
         assert_eq!(updated.origin, String::from_str(&env, "Factory B"));
         assert_eq!(updated.id, product_id);
         assert_eq!(updated.owner, owner);
+    }
+
+    // ── Emergency stop tests ──────────────────────────────────────────────────
+
+    fn setup_with_guardian() -> (Env, soroban_sdk::Address, soroban_sdk::Address, soroban_sdk::Address, String) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(SupplyLinkContract, ());
+        let client = SupplyLinkContractClient::new(&env, &contract_id);
+        let guardian = soroban_sdk::Address::generate(&env);
+        let owner = soroban_sdk::Address::generate(&env);
+        let product_id = String::from_str(&env, "prod-pause");
+        client.init_guardian(&guardian);
+        client.register_product(
+            &product_id,
+            &String::from_str(&env, "Widget"),
+            &String::from_str(&env, "Factory"),
+            &owner,
+        );
+        (env, contract_id, guardian, owner, product_id)
+    }
+
+    /// Contract starts unpaused
+    #[test]
+    fn test_is_paused_default_false() {
+        let env = Env::default();
+        let contract_id = env.register(SupplyLinkContract, ());
+        let client = SupplyLinkContractClient::new(&env, &contract_id);
+        assert!(!client.is_paused());
+    }
+
+    /// Guardian can pause and unpause
+    #[test]
+    fn test_guardian_can_pause_and_unpause() {
+        let (env, contract_id, guardian, _owner, _product_id) = setup_with_guardian();
+        let client = SupplyLinkContractClient::new(&env, &contract_id);
+        client.set_pause_state(&guardian, &true);
+        assert!(client.is_paused());
+        client.set_pause_state(&guardian, &false);
+        assert!(!client.is_paused());
+    }
+
+    /// Non-guardian cannot pause
+    #[test]
+    #[should_panic(expected = "caller is not a guardian")]
+    fn test_non_guardian_cannot_pause() {
+        let (env, contract_id, _guardian, _owner, _product_id) = setup_with_guardian();
+        let client = SupplyLinkContractClient::new(&env, &contract_id);
+        let stranger = soroban_sdk::Address::generate(&env);
+        client.set_pause_state(&stranger, &true);
+    }
+
+    /// Paused contract rejects register_product
+    #[test]
+    #[should_panic(expected = "contract is paused")]
+    fn test_paused_blocks_register_product() {
+        let (env, contract_id, guardian, _owner, _product_id) = setup_with_guardian();
+        let client = SupplyLinkContractClient::new(&env, &contract_id);
+        client.set_pause_state(&guardian, &true);
+        let new_owner = soroban_sdk::Address::generate(&env);
+        client.register_product(
+            &String::from_str(&env, "new-prod"),
+            &String::from_str(&env, "Widget"),
+            &String::from_str(&env, "Factory"),
+            &new_owner,
+        );
+    }
+
+    /// Paused contract rejects add_tracking_event
+    #[test]
+    #[should_panic(expected = "contract is paused")]
+    fn test_paused_blocks_add_tracking_event() {
+        let (env, contract_id, guardian, owner, product_id) = setup_with_guardian();
+        let client = SupplyLinkContractClient::new(&env, &contract_id);
+        client.set_pause_state(&guardian, &true);
+        client.add_tracking_event(
+            &product_id,
+            &owner,
+            &String::from_str(&env, "Warehouse"),
+            &String::from_str(&env, "SHIPPING"),
+            &String::from_str(&env, "{}"),
+        );
+    }
+
+    /// Paused contract rejects transfer_ownership
+    #[test]
+    #[should_panic(expected = "contract is paused")]
+    fn test_paused_blocks_transfer_ownership() {
+        let (env, contract_id, guardian, _owner, product_id) = setup_with_guardian();
+        let client = SupplyLinkContractClient::new(&env, &contract_id);
+        client.set_pause_state(&guardian, &true);
+        let new_owner = soroban_sdk::Address::generate(&env);
+        client.transfer_ownership(&product_id, &new_owner);
+    }
+
+    /// Read operations remain available while paused
+    #[test]
+    fn test_paused_allows_reads() {
+        let (env, contract_id, guardian, _owner, product_id) = setup_with_guardian();
+        let client = SupplyLinkContractClient::new(&env, &contract_id);
+        client.set_pause_state(&guardian, &true);
+        // These must not panic
+        let _ = client.get_product(&product_id);
+        let _ = client.get_tracking_events(&product_id);
+        let _ = client.is_paused();
+        let _ = client.get_guardians();
+        let _ = client.get_product_count();
+    }
+
+    /// Unpausing restores write access
+    #[test]
+    fn test_unpause_restores_writes() {
+        let (env, contract_id, guardian, owner, product_id) = setup_with_guardian();
+        let client = SupplyLinkContractClient::new(&env, &contract_id);
+        client.set_pause_state(&guardian, &true);
+        client.set_pause_state(&guardian, &false);
+        // Should succeed after unpause
+        client.add_tracking_event(
+            &product_id,
+            &owner,
+            &String::from_str(&env, "Warehouse"),
+            &String::from_str(&env, "SHIPPING"),
+            &String::from_str(&env, "{}"),
+        );
+        assert_eq!(client.get_events_count(&product_id), 1);
+    }
+
+    /// init_guardian cannot be called twice
+    #[test]
+    #[should_panic(expected = "guardians already initialised")]
+    fn test_init_guardian_only_once() {
+        let (env, contract_id, _guardian, _owner, _product_id) = setup_with_guardian();
+        let client = SupplyLinkContractClient::new(&env, &contract_id);
+        let second = soroban_sdk::Address::generate(&env);
+        client.init_guardian(&second);
+    }
+
+    /// add_guardian works and new guardian can pause
+    #[test]
+    fn test_add_guardian_can_pause() {
+        let (env, contract_id, guardian, _owner, _product_id) = setup_with_guardian();
+        let client = SupplyLinkContractClient::new(&env, &contract_id);
+        let second = soroban_sdk::Address::generate(&env);
+        client.add_guardian(&guardian, &second);
+        client.set_pause_state(&second, &true);
+        assert!(client.is_paused());
+    }
+
+    /// Cannot remove the last guardian
+    #[test]
+    #[should_panic(expected = "cannot remove the last guardian")]
+    fn test_cannot_remove_last_guardian() {
+        let (env, contract_id, guardian, _owner, _product_id) = setup_with_guardian();
+        let client = SupplyLinkContractClient::new(&env, &contract_id);
+        client.remove_guardian(&guardian, &guardian);
     }
 }

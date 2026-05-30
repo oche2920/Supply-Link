@@ -9,6 +9,7 @@ interface SupplyLinkStore {
   walletAddress: string | null;
   xlmBalance: string | null;
   networkMismatch: boolean;
+  contractPaused: boolean;
   lastFetched: number | null;
   productPage: number;
   productPageSize: number;
@@ -19,6 +20,7 @@ interface SupplyLinkStore {
   setWalletAddress: (address: string | null) => void;
   setXlmBalance: (balance: string | null) => void;
   setNetworkMismatch: (mismatch: boolean) => void;
+  setContractPaused: (paused: boolean) => void;
   addProduct: (product: Product) => void;
   addEvent: (event: TrackingEvent) => void;
   setProducts: (products: Product[]) => void;
@@ -43,6 +45,7 @@ export const useStore = create<SupplyLinkStore>()(
       walletAddress: null,
       xlmBalance: null,
       networkMismatch: false,
+      contractPaused: false,
       lastFetched: null,
       productPage: 0,
       productPageSize: 20,
@@ -53,6 +56,7 @@ export const useStore = create<SupplyLinkStore>()(
       setWalletAddress: (address) => set({ walletAddress: address }),
       setXlmBalance: (balance) => set({ xlmBalance: balance }),
       setNetworkMismatch: (mismatch) => set({ networkMismatch: mismatch }),
+      setContractPaused: (paused) => set({ contractPaused: paused }),
       addProduct: (product) =>
         set((state) => ({ products: [...state.products, product] })),
       addEvent: (event) =>

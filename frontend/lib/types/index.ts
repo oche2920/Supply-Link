@@ -39,3 +39,20 @@ export interface Certification {
   revoked: boolean;
   revokedAt?: number; // unix ms
 }
+
+// ── Risk scoring ──────────────────────────────────────────────────────────────
+
+export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+
+export interface RiskFactor {
+  id: string;
+  label: string;
+  description: string;
+  score: number; // points contributed (0–100 scale)
+}
+
+export interface RiskScore {
+  total: number;       // 0–100
+  level: RiskLevel;
+  factors: RiskFactor[];
+}

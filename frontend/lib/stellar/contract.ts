@@ -273,4 +273,54 @@ export const contractClient = {
     }
     throw new Error("Failed to get certifications");
   },
+
+  // ── Emergency Stop ────────────────────────────────────────────────────────
+
+  async isPaused(callerAddress: string): Promise<boolean> {
+    const simulated = await buildAndSimulateTransaction({
+      method: "is_paused",
+      args: [],
+      callerAddress,
+    });
+    if (SorobanRpc.isSimulationSuccess(simulated)) {
+      return scValToNative(simulated.results?.[0]) ?? false;
+    }
+    return false;
+  },
+
+  async setPauseState(paused: boolean, callerAddress: string): Promise<string> {
+    return buildSignAndSubmitTransaction({
+      method: "set_pause_state",
+      args: [new Address(callerAddress), paused],
+      callerAddress,
+    });
+  },
+
+  async initGuardian(guardian: string, callerAddress: string): Promise<string> {
+    return buildSignAndSubmitTransaction({
+      method: "init_guardian",
+      args: [new Address(guardian)],
+      callerAddress,
+    });
+  },
+
+  async addGuardian(newGuardian: string, callerAddress: string): Promise<string> {
+    return buildSignAndSubmitTransaction({
+      method: "add_guardian",
+      args: [new Address(callerAddress), new Address(newGuardian)],
+      callerAddress,
+    });
+  },
+
+  async getGuardians(callerAddress: string): Promise<string[]> {
+    const simulated = await buildAndSimulateTransaction({
+      method: "get_guardians",
+      args: [],
+      callerAddress,
+    });
+    if (SorobanRpc.isSimulationSuccess(simulated)) {
+      return scValToNative(simulated.results?.[0]) || [];
+    }
+    return [];
+  },
 };

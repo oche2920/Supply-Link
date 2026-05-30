@@ -1,10 +1,17 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getProductById, getCertificationsByProductId } from "@/lib/mock/products";
+import {
+  getProductById,
+  getCertificationsByProductId,
+  getEventsByProductId,
+  getArchivedEventsByProductId,
+} from "@/lib/mock/products";
 import ProductQRCode from "@/components/products/ProductQRCode";
 import ProductActions from "@/components/products/ProductActions";
 import { AuthorizedActorsPanel } from "@/components/products/AuthorizedActorsPanel";
 import { CertificationPanel } from "@/components/products/CertificationPanel";
+import { RiskBadge } from "@/components/products/RiskBadge";
+import { computeRiskScore } from "@/lib/risk/scorer";
 
 interface Props {
   params: { id: string };
@@ -16,6 +23,12 @@ export default function ProductDetailPage({ params }: Props) {
   const p = product!;
   const registeredAt = new Date(p.timestamp).toLocaleString();
   const certifications = getCertificationsByProductId(p.id);
+  const risk = computeRiskScore({
+    product: p,
+    activeEvents: getEventsByProductId(p.id),
+    archivedEvents: getArchivedEventsByProductId(p.id),
+    certifications,
+  });
 
   return (
     <main className="p-8 max-w-3xl mx-auto">
@@ -27,6 +40,9 @@ export default function ProductDetailPage({ params }: Props) {
         <div>
           <h1 className="text-2xl font-bold text-[var(--foreground)]">{p.name}</h1>
           <p className="text-[var(--muted)] mt-1">Product ID: <span className="font-mono text-sm">{p.id}</span></p>
+          <div className="mt-2">
+            <RiskBadge risk={risk} showDetails />
+          </div>
         </div>
         <ProductQRCode productId={p.id} size={160} />
       </div>
