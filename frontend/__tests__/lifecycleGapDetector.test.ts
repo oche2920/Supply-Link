@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { detectLifecycleGaps, hasCriticalGaps, getGapSummary } from './lifecycleGapDetector';
+import {
+  detectLifecycleGaps,
+  hasCriticalGaps,
+  getGapSummary,
+} from '@/lib/services/lifecycleGapDetector';
 import type { TrackingEvent } from '@/lib/types';
 
 describe('lifecycleGapDetector', () => {

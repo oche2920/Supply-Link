@@ -6,7 +6,7 @@ import {
   getEventIcon,
   getEventColor,
   getTimeElapsed,
-} from './provenanceStory';
+} from '@/lib/services/provenanceStory';
 import type { TrackingEvent } from '@/lib/types';
 
 describe('provenanceStory', () => {

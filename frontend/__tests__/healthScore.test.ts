@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { calculateHealthScore, getHealthScoreColor, getHealthScoreBgColor } from './healthScore';
+import {
+  calculateHealthScore,
+  getHealthScoreColor,
+  getHealthScoreBgColor,
+} from '@/lib/services/healthScore';
 import type { Product, TrackingEvent } from '@/lib/types';
 
 describe('healthScore', () => {
