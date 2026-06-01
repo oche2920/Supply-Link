@@ -385,69 +385,122 @@ pub struct DocumentAnchor {
     pub anchored_at: u64,
 }
 
-// ── Issue #495: Actor trust weight and blacklist ──────────────────────────────
+// ── Issue #503: Event timestamp certification ────────────────────────────────
 
-/// Trust weight record for an actor (manufacturer/supplier). (#495)
+/// Timestamp certification for an event, issued by an authorized certifier.
+/// Provides cryptographic proof that an event occurred at a specific time.
 #[contracttype]
 #[derive(Clone)]
-pub struct ActorTrustWeight {
-    pub actor: Address,
-    pub trust_weight: u32,  // 0-100 scale
-    pub blacklisted: bool,
-    pub blacklist_reason: String,
-    pub last_updated: u64,
-}
-
-// ── Issue #496: Certification chain explorer ──────────────────────────────────
-
-/// Certification chain link showing dependencies between certifications. (#496)
-#[contracttype]
-#[derive(Clone)]
-pub struct CertificationChainLink {
-    pub from_cert_id: String,
-    pub to_cert_id: String,
-    pub link_type: String,  // "depends_on", "supersedes", "related"
-    pub created_at: u64,
-}
-
-// ── Issue #497: Multi-stage recall with jurisdiction ────────────────────────
-
-/// Recall stage with jurisdiction scope. (#497)
-#[contracttype]
-#[derive(Clone)]
-pub struct RecallStage {
-    pub stage_id: String,
+pub struct EventTimestampCert {
+    /// Unique identifier for this certification.
+    pub id: String,
+    /// Product ID this certification belongs to.
     pub product_id: String,
-    pub jurisdiction: String,  // ISO 3166-1 alpha-2 code or "GLOBAL"
-    pub stage_type: String,    // "INITIATED", "IN_PROGRESS", "COMPLETED"
-    pub created_at: u64,
-    pub updated_at: u64,
-}
-
-// ── Issue #498: Provenance badge issuer registry ────────────────────────────
-
-/// Registered badge issuer for provenance validation. (#498)
-#[contracttype]
-#[derive(Clone)]
-pub struct BadgeIssuer {
-    pub issuer: Address,
-    pub issuer_name: String,
-    pub badge_type: String,  // "ORGANIC", "FAIR_TRADE", "ISO_9001", etc.
-    pub trusted: bool,
-    pub registered_at: u64,
-}
-
-/// Provenance badge issued by a trusted validator. (#498)
-#[contracttype]
-#[derive(Clone)]
-pub struct ProvenanceBadge {
-    pub badge_id: String,
-    pub product_id: String,
-    pub issuer: Address,
-    pub badge_type: String,
+    /// Stable ID of the event being certified.
+    pub event_stable_id: String,
+    /// Certified timestamp (ledger timestamp when certified).
+    pub certified_timestamp: u64,
+    /// Address of the certifier (authorized entity).
+    pub certifier: Address,
+    /// Timestamp when the certification was issued.
     pub issued_at: u64,
-    pub expires_at: u64,
+    /// Whether this certification has been revoked.
     pub revoked: bool,
+}
+
+// ── Issue #504: Product provenance proof notarization ────────────────────────
+
+/// Notarized proof of product provenance, issued by authorized notaries.
+/// Provides legal/regulatory proof of product history.
+#[contracttype]
+#[derive(Clone)]
+pub struct ProvenanceNotarization {
+    /// Unique identifier for this notarization.
+    pub id: String,
+    /// Product ID this notarization covers.
+    pub product_id: String,
+    /// Hash of the provenance proof document (off-chain).
+    pub proof_hash: String,
+    /// Address of the notary who issued this.
+    pub notary: Address,
+    /// Timestamp when notarization was issued.
+    pub notarized_at: u64,
+    /// Expiration timestamp (0 = never expires).
+    pub expires_at: u64,
+    /// Whether this notarization has been revoked.
+    pub revoked: bool,
+}
+
+// ── Issue #505: Supply chain event certification workflows ──────────────────
+
+/// Certifier registration and metadata.
+#[contracttype]
+#[derive(Clone)]
+pub struct Certifier {
+    /// Unique identifier for this certifier.
+    pub id: String,
+    /// Stellar address of the certifier.
+    pub address: Address,
+    /// Human-readable name of the certifier.
+    pub name: String,
+    /// Certification types this certifier is authorized for (e.g., "organic", "fair_trade").
+    pub cert_types: Vec<String>,
+    /// Timestamp when the certifier was registered.
+    pub registered_at: u64,
+    /// Whether this certifier is active.
+    pub active: bool,
+}
+
+/// Certification of a supply chain event by an authorized certifier.
+#[contracttype]
+#[derive(Clone)]
+pub struct EventCertification {
+    /// Unique identifier for this event certification.
+    pub id: String,
+    /// Product ID this certification belongs to.
+    pub product_id: String,
+    /// Stable ID of the event being certified.
+    pub event_stable_id: String,
+    /// Type of certification (e.g., "quality_check", "compliance_verified").
+    pub cert_type: String,
+    /// Address of the certifier.
+    pub certifier: Address,
+    /// Certification metadata (JSON string).
+    pub metadata: String,
+    /// Timestamp when the certification was issued.
+    pub issued_at: u64,
+    /// Whether this certification has been revoked.
+    pub revoked: bool,
+    /// Revocation timestamp (0 if not revoked).
+    pub revoked_at: u64,
+}
+
+// ── Issue #506: AI-assisted anomaly review assistant ────────────────────────
+
+/// Anomaly detection result for a product's supply chain.
+#[contracttype]
+#[derive(Clone)]
+pub struct AnomalyReport {
+    /// Unique identifier for this report.
+    pub id: String,
+    /// Product ID this report is for.
+    pub product_id: String,
+    /// Anomaly type (e.g., "timing_gap", "temperature_deviation", "actor_mismatch").
+    pub anomaly_type: String,
+    /// Severity level: 1=low, 2=medium, 3=high, 4=critical.
+    pub severity: u32,
+    /// Human-readable description of the anomaly.
+    pub description: String,
+    /// Suggested remediation actions (JSON string).
+    pub suggested_actions: String,
+    /// Timestamp when the anomaly was detected.
+    pub detected_at: u64,
+    /// Whether this anomaly has been reviewed.
+    pub reviewed: bool,
+    /// Address of the analyst who reviewed it (if reviewed).
+    pub reviewed_by: Address,
+    /// Timestamp of review (0 if not reviewed).
+    pub reviewed_at: u64,
 }
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -484,16 +537,18 @@ pub enum DataKey {
     OriginAttestations(String),
     /// Key for document anchors for a product. The inner `String` is the product ID. (#460)
     DocumentAnchors(String),
-    /// Actor trust weight record keyed by Address. (#495)
-    ActorTrustWeight(Address),
-    /// Certification chain links for a product. (#496)
-    CertificationChainLinks(String),
-    /// Recall stages for a product. (#497)
-    RecallStages(String),
-    /// Badge issuer registry keyed by Address. (#498)
-    BadgeIssuer(Address),
-    /// Provenance badges for a product. (#498)
-    ProvenanceBadges(String),
+    /// Key for event timestamp certifications for a product. (#503)
+    EventTimestampCerts(String),
+    /// Key for provenance notarizations for a product. (#504)
+    ProvenanceNotarizations(String),
+    /// Key for registered certifiers. The inner `String` is the certifier ID.
+    Certifier(String),
+    /// Key for all certifier IDs (Vec<String>).
+    CertifierIndex,
+    /// Key for event certifications for a product. (#505)
+    EventCertifications(String),
+    /// Key for anomaly reports for a product. (#506)
+    AnomalyReports(String),
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -4052,4 +4107,528 @@ mod rejection_reason_tests {
             .get(&DataKey::DocumentAnchors(product_id))
             .unwrap_or_else(|| Vec::new(&env))
     }
+
+    // ── Issue #503: Event timestamp certification ────────────────────────────
+
+    /// Certify the timestamp of a tracking event.
+    /// Only authorized certifiers can issue timestamp certifications.
+    pub fn certify_event_timestamp(
+        env: Env,
+        product_id: String,
+        event_stable_id: String,
+        certifier: Address,
+    ) -> EventTimestampCert {
+        let product: Product = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Product(product_id.clone()))
+            .expect("product not found");
+
+        let is_owner = product.owner == certifier;
+        let is_actor = product.authorized_actors.contains(&certifier);
+        if !is_owner && !is_actor {
+            panic!("certifier is not authorized");
+        }
+        certifier.require_auth();
+
+        let cert_id = format_cert_id(&env, &product_id, &event_stable_id);
+        let now = env.ledger().timestamp();
+
+        let cert = EventTimestampCert {
+            id: cert_id.clone(),
+            product_id: product_id.clone(),
+            event_stable_id,
+            certified_timestamp: now,
+            certifier,
+            issued_at: now,
+            revoked: false,
+        };
+
+        let mut certs: Vec<EventTimestampCert> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EventTimestampCerts(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        certs.push_back(cert.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::EventTimestampCerts(product_id.clone()), &certs);
+
+        env.events().publish(
+            (Symbol::new(&env, "event_timestamp_certified"), product_id),
+            cert.clone(),
+        );
+
+        cert
+    }
+
+    /// Get all timestamp certifications for a product.
+    pub fn get_event_timestamp_certs(env: Env, product_id: String) -> Vec<EventTimestampCert> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::EventTimestampCerts(product_id))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Revoke a timestamp certification.
+    pub fn revoke_event_timestamp_cert(
+        env: Env,
+        product_id: String,
+        cert_id: String,
+        revoker: Address,
+    ) -> bool {
+        let product: Product = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Product(product_id.clone()))
+            .expect("product not found");
+
+        product.owner.require_auth();
+
+        let mut certs: Vec<EventTimestampCert> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EventTimestampCerts(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut found = false;
+        for i in 0..certs.len() {
+            let mut cert = certs.get(i).unwrap().clone();
+            if cert.id == cert_id {
+                cert.revoked = true;
+                certs.set(i, cert);
+                found = true;
+                break;
+            }
+        }
+
+        if found {
+            env.storage()
+                .persistent()
+                .set(&DataKey::EventTimestampCerts(product_id.clone()), &certs);
+            env.events().publish(
+                (Symbol::new(&env, "event_timestamp_cert_revoked"), product_id),
+                cert_id,
+            );
+        }
+
+        found
+    }
+
+    // ── Issue #504: Product provenance proof notarization ────────────────────
+
+    /// Notarize a product's provenance proof.
+    /// Only authorized notaries can issue notarizations.
+    pub fn notarize_provenance(
+        env: Env,
+        product_id: String,
+        proof_hash: String,
+        notary: Address,
+        expires_at: u64,
+    ) -> ProvenanceNotarization {
+        let product: Product = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Product(product_id.clone()))
+            .expect("product not found");
+
+        let is_owner = product.owner == notary;
+        let is_actor = product.authorized_actors.contains(&notary);
+        if !is_owner && !is_actor {
+            panic!("notary is not authorized");
+        }
+        notary.require_auth();
+
+        // Proof hash should be 64 chars (SHA-256 hex)
+        if proof_hash.len() != 64 {
+            panic!("proof_hash must be a 64-char hex-encoded SHA-256 digest");
+        }
+
+        let notarization_id = format_notarization_id(&env, &product_id);
+        let now = env.ledger().timestamp();
+
+        let notarization = ProvenanceNotarization {
+            id: notarization_id.clone(),
+            product_id: product_id.clone(),
+            proof_hash,
+            notary,
+            notarized_at: now,
+            expires_at,
+            revoked: false,
+        };
+
+        let mut notarizations: Vec<ProvenanceNotarization> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProvenanceNotarizations(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        notarizations.push_back(notarization.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProvenanceNotarizations(product_id.clone()), &notarizations);
+
+        env.events().publish(
+            (Symbol::new(&env, "provenance_notarized"), product_id),
+            notarization.clone(),
+        );
+
+        notarization
+    }
+
+    /// Get all provenance notarizations for a product.
+    pub fn get_provenance_notarizations(env: Env, product_id: String) -> Vec<ProvenanceNotarization> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::ProvenanceNotarizations(product_id))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Revoke a provenance notarization.
+    pub fn revoke_provenance_notarization(
+        env: Env,
+        product_id: String,
+        notarization_id: String,
+    ) -> bool {
+        let product: Product = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Product(product_id.clone()))
+            .expect("product not found");
+
+        product.owner.require_auth();
+
+        let mut notarizations: Vec<ProvenanceNotarization> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProvenanceNotarizations(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut found = false;
+        for i in 0..notarizations.len() {
+            let mut notarization = notarizations.get(i).unwrap().clone();
+            if notarization.id == notarization_id {
+                notarization.revoked = true;
+                notarizations.set(i, notarization);
+                found = true;
+                break;
+            }
+        }
+
+        if found {
+            env.storage()
+                .persistent()
+                .set(&DataKey::ProvenanceNotarizations(product_id.clone()), &notarizations);
+            env.events().publish(
+                (Symbol::new(&env, "provenance_notarization_revoked"), product_id),
+                notarization_id,
+            );
+        }
+
+        found
+    }
+
+    // ── Issue #505: Supply chain event certification workflows ──────────────
+
+    /// Register a new certifier.
+    pub fn register_certifier(
+        env: Env,
+        id: String,
+        address: Address,
+        name: String,
+        cert_types: Vec<String>,
+    ) -> Certifier {
+        address.require_auth();
+
+        let certifier = Certifier {
+            id: id.clone(),
+            address,
+            name,
+            cert_types,
+            registered_at: env.ledger().timestamp(),
+            active: true,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Certifier(id.clone()), &certifier);
+
+        let mut certifier_ids: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::CertifierIndex)
+            .unwrap_or_else(|| Vec::new(&env));
+        certifier_ids.push_back(id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::CertifierIndex, &certifier_ids);
+
+        env.events().publish(
+            (Symbol::new(&env, "certifier_registered"), id),
+            certifier.clone(),
+        );
+
+        certifier
+    }
+
+    /// Get a certifier by ID.
+    pub fn get_certifier(env: Env, id: String) -> Option<Certifier> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Certifier(id))
+    }
+
+    /// Certify a supply chain event.
+    pub fn certify_event(
+        env: Env,
+        product_id: String,
+        event_stable_id: String,
+        cert_type: String,
+        certifier_id: String,
+        metadata: String,
+    ) -> EventCertification {
+        let certifier: Certifier = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Certifier(certifier_id.clone()))
+            .expect("certifier not found");
+
+        if !certifier.active {
+            panic!("certifier is not active");
+        }
+
+        certifier.address.require_auth();
+
+        // Verify certifier is authorized for this cert type
+        let mut authorized = false;
+        for i in 0..certifier.cert_types.len() {
+            if certifier.cert_types.get(i).unwrap() == cert_type {
+                authorized = true;
+                break;
+            }
+        }
+        if !authorized {
+            panic!("certifier is not authorized for this certification type");
+        }
+
+        let cert_id = format_event_cert_id(&env, &product_id, &event_stable_id, &cert_type);
+        let now = env.ledger().timestamp();
+
+        let certification = EventCertification {
+            id: cert_id.clone(),
+            product_id: product_id.clone(),
+            event_stable_id,
+            cert_type,
+            certifier: certifier.address,
+            metadata,
+            issued_at: now,
+            revoked: false,
+            revoked_at: 0,
+        };
+
+        let mut certifications: Vec<EventCertification> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EventCertifications(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        certifications.push_back(certification.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::EventCertifications(product_id.clone()), &certifications);
+
+        env.events().publish(
+            (Symbol::new(&env, "event_certified"), product_id),
+            certification.clone(),
+        );
+
+        certification
+    }
+
+    /// Get all event certifications for a product.
+    pub fn get_event_certifications(env: Env, product_id: String) -> Vec<EventCertification> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::EventCertifications(product_id))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Revoke an event certification.
+    pub fn revoke_event_certification(
+        env: Env,
+        product_id: String,
+        cert_id: String,
+    ) -> bool {
+        let product: Product = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Product(product_id.clone()))
+            .expect("product not found");
+
+        product.owner.require_auth();
+
+        let mut certifications: Vec<EventCertification> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EventCertifications(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut found = false;
+        for i in 0..certifications.len() {
+            let mut cert = certifications.get(i).unwrap().clone();
+            if cert.id == cert_id {
+                cert.revoked = true;
+                cert.revoked_at = env.ledger().timestamp();
+                certifications.set(i, cert);
+                found = true;
+                break;
+            }
+        }
+
+        if found {
+            env.storage()
+                .persistent()
+                .set(&DataKey::EventCertifications(product_id.clone()), &certifications);
+            env.events().publish(
+                (Symbol::new(&env, "event_certification_revoked"), product_id),
+                cert_id,
+            );
+        }
+
+        found
+    }
+
+    // ── Issue #506: AI-assisted anomaly review assistant ────────────────────
+
+    /// Report an anomaly detected in a product's supply chain.
+    pub fn report_anomaly(
+        env: Env,
+        product_id: String,
+        anomaly_type: String,
+        severity: u32,
+        description: String,
+        suggested_actions: String,
+    ) -> AnomalyReport {
+        let _product: Product = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Product(product_id.clone()))
+            .expect("product not found");
+
+        if severity < 1 || severity > 4 {
+            panic!("severity must be between 1 and 4");
+        }
+
+        let report_id = format_anomaly_id(&env, &product_id);
+        let now = env.ledger().timestamp();
+
+        let report = AnomalyReport {
+            id: report_id.clone(),
+            product_id: product_id.clone(),
+            anomaly_type,
+            severity,
+            description,
+            suggested_actions,
+            detected_at: now,
+            reviewed: false,
+            reviewed_by: Address::from_contract_id(&env, &env.current_contract_address()),
+            reviewed_at: 0,
+        };
+
+        let mut reports: Vec<AnomalyReport> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AnomalyReports(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+        reports.push_back(report.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::AnomalyReports(product_id.clone()), &reports);
+
+        env.events().publish(
+            (Symbol::new(&env, "anomaly_reported"), product_id),
+            report.clone(),
+        );
+
+        report
+    }
+
+    /// Get all anomaly reports for a product.
+    pub fn get_anomaly_reports(env: Env, product_id: String) -> Vec<AnomalyReport> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::AnomalyReports(product_id))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    /// Mark an anomaly report as reviewed by an analyst.
+    pub fn review_anomaly(
+        env: Env,
+        product_id: String,
+        report_id: String,
+        analyst: Address,
+    ) -> bool {
+        analyst.require_auth();
+
+        let mut reports: Vec<AnomalyReport> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AnomalyReports(product_id.clone()))
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut found = false;
+        for i in 0..reports.len() {
+            let mut report = reports.get(i).unwrap().clone();
+            if report.id == report_id {
+                report.reviewed = true;
+                report.reviewed_by = analyst.clone();
+                report.reviewed_at = env.ledger().timestamp();
+                reports.set(i, report);
+                found = true;
+                break;
+            }
+        }
+
+        if found {
+            env.storage()
+                .persistent()
+                .set(&DataKey::AnomalyReports(product_id.clone()), &reports);
+            env.events().publish(
+                (Symbol::new(&env, "anomaly_reviewed"), product_id),
+                report_id,
+            );
+        }
+
+        found
+    }
+}
+
+// ── Helper functions ─────────────────────────────────────────────────────────
+
+fn format_cert_id(env: &Env, product_id: &String, event_stable_id: &String) -> String {
+    let mut result = String::from_str(env, "cert_");
+    result.append(&product_id.clone());
+    result.append(&String::from_str(env, "_"));
+    result.append(&event_stable_id.clone());
+    result
+}
+
+fn format_notarization_id(env: &Env, product_id: &String) -> String {
+    let mut result = String::from_str(env, "notary_");
+    result.append(&product_id.clone());
+    result
+}
+
+fn format_event_cert_id(env: &Env, product_id: &String, event_stable_id: &String, cert_type: &String) -> String {
+    let mut result = String::from_str(env, "eventcert_");
+    result.append(&product_id.clone());
+    result.append(&String::from_str(env, "_"));
+    result.append(&event_stable_id.clone());
+    result.append(&String::from_str(env, "_"));
+    result.append(&cert_type.clone());
+    result
+}
+
+fn format_anomaly_id(env: &Env, product_id: &String) -> String {
+    let mut result = String::from_str(env, "anomaly_");
+    result.append(&product_id.clone());
+    result
 }
